@@ -1,8 +1,11 @@
-import React, { useState, useMemo } from 'react';
-import { Calendar, Film, Clock, MapPin, Train } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Calendar, Film, Clock, MapPin, Train, Ticket } from 'lucide-react';
+
+const todayAmsterdam = () =>
+  new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
 
 export default function CinevilleFinder() {
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = todayAmsterdam();
 
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const [customDate, setCustomDate] = useState('');
@@ -18,46 +21,37 @@ export default function CinevilleFinder() {
     avond: true,
   });
   const [travelMinutes, setTravelMinutes] = useState('');
+  const [films, setFilms] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  const filmDatabase = {
-    '2026-03-29': [
-      { id: 1, title: 'Parasite', time: '14:00', theater: 'kino', duration: 132, genre: 'Drama', language: 'Koreaans' },
-      { id: 2, title: 'Moonlight', time: '16:30', theater: 'kino', duration: 111, genre: 'Drama', language: 'Engels' },
-      { id: 3, title: 'The Farewell', time: '19:00', theater: 'kino', duration: 100, genre: 'Comedy-Drama', language: 'Engels' },
-      { id: 4, title: 'Drive My Car', time: '21:15', theater: 'kino', duration: 179, genre: 'Drama', language: 'Japans' },
-      { id: 5, title: 'Everything Everywhere All at Once', time: '13:30', theater: 'cinerama', duration: 139, genre: 'Sci-Fi', language: 'Engels' },
-      { id: 6, title: 'Past Lives', time: '15:45', theater: 'cinerama', duration: 106, genre: 'Drama', language: 'Engels/Koreaans' },
-      { id: 7, title: 'All Fours', time: '18:00', theater: 'cinerama', duration: 94, genre: 'Drama', language: 'Engels' },
-      { id: 8, title: 'Anatomie of a Fall', time: '20:30', theater: 'cinerama', duration: 150, genre: 'Thriller', language: 'Frans' },
-      { id: 9, title: 'In the Mood for Love', time: '14:30', theater: 'lantaren', duration: 98, genre: 'Drama', language: 'Kantonees' },
-      { id: 10, title: 'Harakiri', time: '17:00', theater: 'lantaren', duration: 183, genre: 'Drama', language: 'Japans' },
-      { id: 11, title: 'Stalker', time: '19:30', theater: 'lantaren', duration: 163, genre: 'Sci-Fi', language: 'Russisch' },
-      { id: 12, title: 'The Red Shoes', time: '21:45', theater: 'lantaren', duration: 135, genre: 'Drama', language: 'Engels' },
-    ],
-    '2026-03-30': [
-      { id: 13, title: 'Perfect Days', time: '13:00', theater: 'kino', duration: 124, genre: 'Drama', language: 'Japans' },
-      { id: 14, title: 'The Wandering Soap Opera', time: '15:30', theater: 'kino', duration: 90, genre: 'Comedy', language: 'Nederlands' },
-      { id: 15, title: 'Green Knight', time: '18:15', theater: 'cinerama', duration: 150, genre: 'Fantasy', language: 'Engels' },
-      { id: 16, title: 'Boiling Point', time: '20:00', theater: 'cinerama', duration: 92, genre: 'Drama', language: 'Engels' },
-      { id: 17, title: 'The Cinema Continueth', time: '14:00', theater: 'lantaren', duration: 88, genre: 'Documentary', language: 'Engels' },
-      { id: 18, title: 'Playtime', time: '20:00', theater: 'lantaren', duration: 124, genre: 'Comedy', language: 'Frans' },
-    ],
-    '2026-03-31': [
-      { id: 19, title: 'Bicycle Thieves', time: '15:00', theater: 'kino', duration: 89, genre: 'Drama', language: 'Italiaans' },
-      { id: 20, title: 'La Jetée', time: '19:00', theater: 'cinerama', duration: 29, genre: 'Sci-Fi', language: 'Frans' },
-      { id: 21, title: 'Yi Yi', time: '17:30', theater: 'lantaren', duration: 173, genre: 'Drama', language: 'Chinees' },
-    ],
-    '2026-04-01': [
-      { id: 22, title: 'Amélie', time: '14:15', theater: 'kino', duration: 122, genre: 'Comedy-Drama', language: 'Frans' },
-      { id: 23, title: 'Mulholland Drive', time: '19:00', theater: 'cinerama', duration: 147, genre: 'Thriller', language: 'Engels' },
-      { id: 24, title: 'Chungking Express', time: '16:45', theater: 'lantaren', duration: 102, genre: 'Drama', language: 'Kantonees' },
-    ],
-    '2026-04-02': [
-      { id: 25, title: 'Spirited Away', time: '14:30', theater: 'kino', duration: 125, genre: 'Fantasy', language: 'Japans' },
-      { id: 26, title: 'Boyhood', time: '15:00', theater: 'cinerama', duration: 165, genre: 'Drama', language: 'Engels' },
-      { id: 27, title: 'The Third Man', time: '20:00', theater: 'lantaren', duration: 90, genre: 'Thriller', language: 'Engels' },
-    ],
-  };
+  // Haal films op bij datumwisseling
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setFilms([]);
+
+    fetch(`/.netlify/functions/schedule?date=${selectedDate}`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Kon programmering niet laden.');
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setFilms(Array.isArray(data) ? data : []);
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err.message);
+          setLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [selectedDate]);
 
   const theaterNames = { kino: 'Kino', cinerama: 'Cinerama', lantaren: 'LantarenVenster' };
   const dayPartNames = { ochtend: 'Ochtend', middag: 'Middag', vooravond: 'Vooravond', avond: 'Avond' };
@@ -106,15 +100,19 @@ export default function CinevilleFinder() {
   };
 
   const filteredFilms = useMemo(() => {
-    const films = filmDatabase[selectedDate] || [];
     const isToday = selectedDate === todayStr;
-
     let cutoffMinutes = 0;
+
     if (isToday) {
       const now = new Date();
-      const nowMinutes = now.getHours() * 60 + now.getMinutes();
-      const travel = parseInt(travelMinutes) || 0;
-      cutoffMinutes = nowMinutes + travel;
+      const amsterdamTime = now.toLocaleTimeString('nl-NL', {
+        timeZone: 'Europe/Amsterdam',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+      const [h, m] = amsterdamTime.split(':').map(Number);
+      cutoffMinutes = h * 60 + m + (parseInt(travelMinutes) || 0);
     }
 
     return films
@@ -122,22 +120,17 @@ export default function CinevilleFinder() {
       .filter((film) => selectedDayParts[getDayPartForTime(film.time)])
       .filter((film) => !isToday || timeToMinutes(film.time) >= cutoffMinutes)
       .sort((a, b) => a.time.localeCompare(b.time));
-  }, [selectedDate, selectedTheaters, selectedDayParts, travelMinutes]);
+  }, [films, selectedTheaters, selectedDayParts, travelMinutes, selectedDate]);
 
-  const toggleTheater = (theater) => {
-    setSelectedTheaters((prev) => ({ ...prev, [theater]: !prev[theater] }));
-  };
-
-  const toggleDayPart = (dayPart) => {
-    setSelectedDayParts((prev) => ({ ...prev, [dayPart]: !prev[dayPart] }));
-  };
+  const toggleTheater = (t) => setSelectedTheaters((p) => ({ ...p, [t]: !p[t] }));
+  const toggleDayPart = (d) => setSelectedDayParts((p) => ({ ...p, [d]: !p[d] }));
 
   const getNextDays = () => {
     const days = [];
     for (let i = 0; i < 3; i++) {
-      const date = new Date();
-      date.setDate(date.getDate() + i);
-      days.push(date.toISOString().split('T')[0]);
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      days.push(d.toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' }));
     }
     return days;
   };
@@ -146,24 +139,33 @@ export default function CinevilleFinder() {
     const today = new Date();
     today.setDate(today.getDate() - 1);
     return {
-      minDate: today.toISOString().split('T')[0],
-      maxDate: new Date(new Date().setDate(new Date().getDate() + 30)).toISOString().split('T')[0],
+      minDate: today.toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' }),
+      maxDate: new Date(Date.now() + 30 * 86400000).toLocaleDateString('sv-SE', {
+        timeZone: 'Europe/Amsterdam',
+      }),
     };
   };
 
   const formatDate = (dateStr) =>
-    new Date(dateStr + 'T00:00:00').toLocaleDateString('nl-NL', {
+    new Date(dateStr + 'T12:00:00+01:00').toLocaleDateString('nl-NL', {
       weekday: 'short',
       month: 'short',
       day: 'numeric',
     });
+
+  const calcEndTime = (time, duration) => {
+    if (!duration) return null;
+    const [h, m] = time.split(':').map(Number);
+    const end = h * 60 + m + duration;
+    return `${String(Math.floor(end / 60) % 24).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`;
+  };
 
   const isToday = selectedDate === todayStr;
 
   return (
     <div className="bg-cinematic min-h-screen text-white relative">
       {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-white/8 backdrop-blur-lg bg-black/30">
+      <header className="sticky top-0 z-10 border-b border-white/10 backdrop-blur-lg bg-black/30">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 py-5">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-red-600 flex items-center justify-center flex-shrink-0">
@@ -183,7 +185,7 @@ export default function CinevilleFinder() {
 
       <main className="relative z-10 max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-5">
 
-        {/* Filter panel — alle instellingen gegroepeerd */}
+        {/* Filter panel */}
         <div className="rounded-2xl border border-white/10 bg-white/[0.04] overflow-hidden divide-y divide-white/[0.06]">
 
           {/* Datum */}
@@ -244,7 +246,11 @@ export default function CinevilleFinder() {
                     {(() => {
                       const now = new Date();
                       const cutoff = new Date(now.getTime() + parseInt(travelMinutes) * 60000);
-                      return cutoff.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+                      return cutoff.toLocaleTimeString('nl-NL', {
+                        timeZone: 'Europe/Amsterdam',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      });
                     })()}
                   </span>
                 </span>
@@ -304,31 +310,54 @@ export default function CinevilleFinder() {
           </div>
         </div>
 
-        {/* Resultaten — tijd is leidend */}
+        {/* Resultaten */}
         <section>
-          {filteredFilms.length > 0 && (
+          {!loading && filteredFilms.length > 0 && (
             <p className="text-[10px] font-bold text-white/25 uppercase tracking-widest mb-2 px-1">
               {filteredFilms.length} voorstelling{filteredFilms.length !== 1 ? 'en' : ''}
             </p>
           )}
-          {filteredFilms.length === 0 ? (
+
+          {loading && (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-12 text-center">
+              <div className="w-8 h-8 border-2 border-white/20 border-t-white/60 rounded-full animate-spin mx-auto mb-4" />
+              <p className="text-white/40 text-sm font-medium">Programmering laden…</p>
+            </div>
+          )}
+
+          {!loading && error && (
+            <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-8 text-center">
+              <p className="text-red-400 font-medium text-sm">{error}</p>
+            </div>
+          )}
+
+          {!loading && !error && filteredFilms.length === 0 && (
             <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-12 text-center">
               <Film className="w-10 h-10 text-white/12 mx-auto mb-4" />
               <p className="text-white/40 font-semibold text-sm">Geen films gevonden</p>
               <p className="text-white/20 text-xs mt-1.5">
                 {isToday
                   ? 'Alle films voor vandaag zijn al begonnen, of komen pas later.'
-                  : 'Probeer een andere datum of bioscoop. Beschikbaar: 29–31 maart en 1–2 april'}
+                  : 'Geen programmering gevonden voor deze datum.'}
               </p>
             </div>
-          ) : (
+          )}
+
+          {!loading && !error && filteredFilms.length > 0 && (
             <div className="rounded-2xl overflow-hidden border border-white/10 bg-white/[0.03] divide-y divide-white/[0.06]">
               {filteredFilms.map((film) => {
                 const cfg = theaterConfig[film.theater];
+                const endTime = calcEndTime(film.time, film.duration);
+                const Row = film.ticketingUrl ? 'a' : 'div';
+                const rowProps = film.ticketingUrl
+                  ? { href: film.ticketingUrl, target: '_blank', rel: 'noopener noreferrer' }
+                  : {};
+
                 return (
-                  <div
+                  <Row
                     key={film.id}
-                    className={`flex items-center gap-4 px-5 py-4 border-l-[3px] ${cfg.leftBorder} ${cfg.rowHover} transition-colors`}
+                    {...rowProps}
+                    className={`flex items-center gap-4 px-5 py-4 border-l-[3px] ${cfg.leftBorder} ${cfg.rowHover} transition-colors group`}
                   >
                     {/* Tijd */}
                     <div className={`flex-shrink-0 w-[60px] text-center py-1.5 rounded-lg border ${cfg.timeBg}`}>
@@ -339,24 +368,36 @@ export default function CinevilleFinder() {
 
                     {/* Info */}
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-white/90 font-semibold text-sm leading-snug truncate">{film.title}</h3>
+                      <h3 className="text-white/90 font-semibold text-sm leading-snug truncate">
+                        {film.title}
+                      </h3>
                       <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                         <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${cfg.theaterLabel}`}>
                           {theaterNames[film.theater]}
                         </span>
-                        <span className="text-[11px] text-white/30 bg-white/[0.06] px-2 py-0.5 rounded-md">{film.genre}</span>
-                        <span className="text-[11px] text-white/30 bg-white/[0.06] px-2 py-0.5 rounded-md">{film.language}</span>
-                        <span className="text-[11px] text-white/20 bg-white/[0.06] px-2 py-0.5 rounded-md">{film.duration} min</span>
-                        <span className="text-[11px] text-white/20 bg-white/[0.06] px-2 py-0.5 rounded-md">
-                          klaar om {(() => {
-                            const [h, m] = film.time.split(':').map(Number);
-                            const end = h * 60 + m + film.duration;
-                            return `${String(Math.floor(end / 60) % 24).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`;
-                          })()}
-                        </span>
+                        {film.language && (
+                          <span className="text-[11px] text-white/30 bg-white/[0.06] px-2 py-0.5 rounded-md">
+                            {film.language}
+                          </span>
+                        )}
+                        {film.duration && (
+                          <span className="text-[11px] text-white/25 bg-white/[0.06] px-2 py-0.5 rounded-md">
+                            {film.duration} min
+                          </span>
+                        )}
+                        {endTime && (
+                          <span className="text-[11px] text-white/20 bg-white/[0.06] px-2 py-0.5 rounded-md">
+                            klaar om {endTime}
+                          </span>
+                        )}
                       </div>
                     </div>
-                  </div>
+
+                    {/* Ticket icoon */}
+                    {film.ticketingUrl && (
+                      <Ticket className="w-4 h-4 text-white/15 flex-shrink-0 group-hover:text-white/40 transition-colors" />
+                    )}
+                  </Row>
                 );
               })}
             </div>
@@ -366,7 +407,7 @@ export default function CinevilleFinder() {
         {/* Footer */}
         <footer className="pt-2 pb-6 text-center">
           <p className="text-[11px] text-white/20 font-medium">
-            Reserveer met je Cineville-pas op de website van de bioscoop
+            Reserveer met je Cineville-pas · klik op een film voor kaartjes
           </p>
         </footer>
       </main>
