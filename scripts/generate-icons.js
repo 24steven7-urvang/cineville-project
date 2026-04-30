@@ -6,32 +6,51 @@ mkdirSync('public', { recursive: true });
 
 const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
-  <!-- Achtergrond -->
   <defs>
-    <radialGradient id="bg" cx="50%" cy="40%" r="60%">
-      <stop offset="0%" stop-color="#2a2a2a"/>
-      <stop offset="100%" stop-color="#050505"/>
+    <radialGradient id="bg" cx="50%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#222222"/>
+      <stop offset="100%" stop-color="#040404"/>
     </radialGradient>
+    <clipPath id="stripClip">
+      <rect x="24" y="44" width="132" height="32" rx="6"/>
+    </clipPath>
   </defs>
+
+  <!-- Achtergrond -->
   <rect width="180" height="180" fill="url(#bg)"/>
 
-  <!-- Rode cirkel -->
-  <circle cx="90" cy="90" r="52" fill="#dc2626"/>
+  <!-- Slagschaduw achter het bord -->
+  <rect x="26" y="82" width="128" height="66" rx="7" fill="black" opacity="0.35"/>
 
-  <!-- Film-rolletje symbool -->
-  <!-- Grote ring -->
-  <circle cx="90" cy="90" r="34" fill="none" stroke="white" stroke-width="6"/>
-  <!-- Binnenste cirkel -->
-  <circle cx="90" cy="90" r="12" fill="white"/>
-  <!-- Sprocket holes: 6 kleine rechthoekjes rondom -->
-  <rect x="87" y="50" width="6" height="10" rx="2" fill="white"/>
-  <rect x="87" y="120" width="6" height="10" rx="2" fill="white"/>
-  <rect x="50" y="87" width="10" height="6" rx="2" fill="white"/>
-  <rect x="120" y="87" width="10" height="6" rx="2" fill="white"/>
-  <rect x="60" y="60" width="10" height="6" rx="2" fill="white" transform="rotate(45 65 63)"/>
-  <rect x="110" y="111" width="10" height="6" rx="2" fill="white" transform="rotate(45 115 114)"/>
-  <rect x="109" y="60" width="10" height="6" rx="2" fill="white" transform="rotate(-45 114 63)"/>
-  <rect x="60" y="111" width="10" height="6" rx="2" fill="white" transform="rotate(-45 65 114)"/>
+  <!-- Wit bord (hoofddeel) -->
+  <rect x="24" y="76" width="132" height="68" rx="7" fill="white"/>
+
+  <!-- Horizontale lijntjes op het bord -->
+  <line x1="38" y1="96"  x2="144" y2="96"  stroke="#d0d0d0" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="38" y1="112" x2="144" y2="112" stroke="#d0d0d0" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="38" y1="128" x2="144" y2="128" stroke="#d0d0d0" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- Klapper (bovenste balk) -->
+  <rect x="24" y="44" width="132" height="32" rx="6" fill="#111"/>
+  <g clip-path="url(#stripClip)">
+    <!-- Rode basiskleur -->
+    <rect x="24" y="44" width="132" height="32" fill="#dc2626"/>
+    <!-- Zwarte diagonale strepen -->
+    <polygon points="24,44  54,44  24,76" fill="#111"/>
+    <polygon points="54,44  84,44  54,76  24,76" fill="#111"/>
+    <polygon points="84,44 114,44  84,76  54,76" fill="#dc2626"/>
+    <polygon points="114,44 144,44 114,76  84,76" fill="#111"/>
+    <polygon points="144,44 174,44 144,76 114,76" fill="#dc2626"/>
+  </g>
+
+  <!-- Scharnierbalk -->
+  <rect x="22" y="74" width="136" height="9" rx="4" fill="#1c1c1c"/>
+
+  <!-- Scharnierknopjes -->
+  <circle cx="46"  cy="78.5" r="5" fill="#2e2e2e"/>
+  <circle cx="46"  cy="78.5" r="2.2" fill="#444"/>
+  <circle cx="134" cy="78.5" r="5" fill="#2e2e2e"/>
+  <circle cx="134" cy="78.5" r="2.2" fill="#444"/>
 </svg>
 `;
 
