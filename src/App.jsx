@@ -24,10 +24,12 @@ export default function CinevilleFinder() {
   const [films, setFilms] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [selectedFilm, setSelectedFilm] = useState(null);
 
   // Haal films op bij datumwisseling
   useEffect(() => {
     let cancelled = false;
+    setSelectedFilm(null);
     setLoading(true);
     setError(null);
     setFilms([]);
@@ -116,11 +118,12 @@ export default function CinevilleFinder() {
     }
 
     return films
+      .filter((film) => !selectedFilm || film.title === selectedFilm)
       .filter((film) => selectedTheaters[film.theater])
       .filter((film) => selectedDayParts[getDayPartForTime(film.time)])
       .filter((film) => !isToday || timeToMinutes(film.time) >= cutoffMinutes)
       .sort((a, b) => a.time.localeCompare(b.time));
-  }, [films, selectedTheaters, selectedDayParts, travelMinutes, selectedDate]);
+  }, [films, selectedTheaters, selectedDayParts, travelMinutes, selectedDate, selectedFilm]);
 
   const toggleTheater = (t) => setSelectedTheaters((p) => ({ ...p, [t]: !p[t] }));
   const toggleDayPart = (d) => setSelectedDayParts((p) => ({ ...p, [d]: !p[d] }));
@@ -312,10 +315,22 @@ export default function CinevilleFinder() {
 
         {/* Resultaten */}
         <section>
-          {!loading && filteredFilms.length > 0 && (
-            <p className="text-[10px] font-bold text-white/25 uppercase tracking-widest mb-2 px-1">
-              {filteredFilms.length} voorstelling{filteredFilms.length !== 1 ? 'en' : ''}
-            </p>
+          {!loading && (selectedFilm || filteredFilms.length > 0) && (
+            <div className="flex items-center gap-2 mb-2 px-1 flex-wrap">
+              <p className="text-[10px] font-bold text-white/25 uppercase tracking-widest">
+                {filteredFilms.length} voorstelling{filteredFilms.length !== 1 ? 'en' : ''}
+              </p>
+              {selectedFilm && (
+                <button
+                  onClick={() => setSelectedFilm(null)}
+                  className="flex items-center gap-1.5 text-[11px] font-semibold bg-white/10 hover:bg-white/15 border border-white/15 text-white/60 hover:text-white/80 px-2.5 py-0.5 rounded-full transition-colors"
+                >
+                  <Film className="w-3 h-3" />
+                  {selectedFilm}
+                  <span className="text-white/40">×</span>
+                </button>
+              )}
+            </div>
           )}
 
           {loading && (
@@ -348,15 +363,11 @@ export default function CinevilleFinder() {
               {filteredFilms.map((film) => {
                 const cfg = theaterConfig[film.theater];
                 const endTime = calcEndTime(film.time, film.duration);
-                const Row = film.ticketingUrl ? 'a' : 'div';
-                const rowProps = film.ticketingUrl
-                  ? { href: film.ticketingUrl, target: '_blank', rel: 'noopener noreferrer' }
-                  : {};
+                const isActive = selectedFilm === film.title;
 
                 return (
-                  <Row
+                  <div
                     key={film.id}
-                    {...rowProps}
                     className={`flex items-center gap-4 px-5 py-4 border-l-[3px] ${cfg.leftBorder} ${cfg.rowHover} transition-colors group`}
                   >
                     {/* Tijd */}
@@ -368,9 +379,18 @@ export default function CinevilleFinder() {
 
                     {/* Info */}
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-white/90 font-semibold text-sm leading-snug truncate">
+                      <button
+                        onClick={() => setSelectedFilm(isActive ? null : film.title)}
+                        className={`text-left font-semibold text-sm leading-snug truncate block w-full transition-colors ${
+                          isActive
+                            ? 'text-white'
+                            : 'text-white/80 hover:text-white'
+                        }`}
+                        title={isActive ? 'Klik om filter te wissen' : `Filter op "${film.title}"`}
+                      >
                         {film.title}
-                      </h3>
+                        {isActive && <span className="ml-1.5 text-white/40 font-normal text-[11px]">× filter</span>}
+                      </button>
                       <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                         <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${cfg.theaterLabel}`}>
                           {theaterNames[film.theater]}
@@ -393,11 +413,20 @@ export default function CinevilleFinder() {
                       </div>
                     </div>
 
-                    {/* Ticket icoon */}
+                    {/* Ticket link */}
                     {film.ticketingUrl && (
-                      <Ticket className="w-4 h-4 text-white/15 flex-shrink-0 group-hover:text-white/40 transition-colors" />
+                      <a
+                        href={film.ticketingUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex-shrink-0 text-white/15 hover:text-white/50 transition-colors"
+                        title="Kaartjes kopen"
+                      >
+                        <Ticket className="w-4 h-4" />
+                      </a>
                     )}
-                  </Row>
+                  </div>
                 );
               })}
             </div>
