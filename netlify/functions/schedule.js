@@ -43,13 +43,19 @@ exports.handler = async function (event) {
     }
   }`;
 
+  // Cineville's API crashes on POST requests (500), but GET works.
+  // Try GET first and fall back to POST in case that ever changes.
+  const endpoint = 'https://cineville.nl/api/graphql';
   let res;
   try {
-    res = await fetch('https://cineville.nl/api/graphql', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
-    });
+    res = await fetch(`${endpoint}?query=${encodeURIComponent(query)}`);
+    if (!res.ok) {
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+    }
   } catch (err) {
     return {
       statusCode: 502,
