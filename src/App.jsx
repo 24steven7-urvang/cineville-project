@@ -1,8 +1,14 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Calendar, Film, Clock, MapPin, Train, Ticket } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { Calendar, Film, Clock, MapPin, Train, Ticket, Search, X } from 'lucide-react';
 
 const todayAmsterdam = () =>
   new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+
+// Hoofdletters en accenten negeren bij zoeken ("amelie" vindt ook "Amélie")
+const normalize = (str) =>
+  str.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+const DAY_LABELS = ['Vandaag', 'Morgen', 'Overmorgen'];
 
 export default function CinevilleFinder() {
   const todayStr = todayAmsterdam();
@@ -25,6 +31,30 @@ export default function CinevilleFinder() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedFilm, setSelectedFilm] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchShows, setSearchShows] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState(null);
+
+  // Programmering per dag onthouden, zodat zoeken en wisselen van datum niet steeds opnieuw laadt
+  const scheduleCache = useRef(new Map());
+  const loadDay = useCallback((date) => {
+    const cache = scheduleCache.current;
+    if (!cache.has(date)) {
+      const request = fetch(`/.netlify/functions/schedule?date=${date}`)
+        .then((res) => {
+          if (!res.ok) throw new Error('Kon programmering niet laden.');
+          return res.json();
+        })
+        .then((data) => (Array.isArray(data) ? data : []))
+        .catch((err) => {
+          cache.delete(date);
+          throw err;
+        });
+      cache.set(date, request);
+    }
+    return cache.get(date);
+  }, []);
 
   // Haal films op bij datumwisseling
   useEffect(() => {
@@ -34,14 +64,10 @@ export default function CinevilleFinder() {
     setError(null);
     setFilms([]);
 
-    fetch(`/.netlify/functions/schedule?date=${selectedDate}`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Kon programmering niet laden.');
-        return res.json();
-      })
+    loadDay(selectedDate)
       .then((data) => {
         if (!cancelled) {
-          setFilms(Array.isArray(data) ? data : []);
+          setFilms(data);
           setLoading(false);
         }
       })
@@ -53,7 +79,7 @@ export default function CinevilleFinder() {
       });
 
     return () => { cancelled = true; };
-  }, [selectedDate]);
+  }, [selectedDate, loadDay]);
 
   const theaterNames = { kino: 'Kino', cinerama: 'Cinerama', lantaren: 'LantarenVenster' };
   const dayPartNames = { ochtend: 'Ochtend', middag: 'Middag', vooravond: 'Vooravond', avond: 'Avond' };
@@ -101,27 +127,29 @@ export default function CinevilleFinder() {
     return h * 60 + m;
   };
 
+  // Vanaf welk tijdstip (in minuten) je vandaag nog op tijd kunt zijn, inclusief reistijd
+  const getTodayCutoffMinutes = () => {
+    const amsterdamTime = new Date().toLocaleTimeString('nl-NL', {
+      timeZone: 'Europe/Amsterdam',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const [h, m] = amsterdamTime.split(':').map(Number);
+    return h * 60 + m + (parseInt(travelMinutes) || 0);
+  };
+
+  // Bioscoop-, dagdeel- en reistijdfilters, gedeeld door de dagweergave en het zoeken
+  const passesFilters = (film, date, cutoffMinutes) =>
+    selectedTheaters[film.theater] &&
+    selectedDayParts[getDayPartForTime(film.time)] &&
+    (date !== todayStr || timeToMinutes(film.time) >= cutoffMinutes);
+
   const filteredFilms = useMemo(() => {
-    const isToday = selectedDate === todayStr;
-    let cutoffMinutes = 0;
-
-    if (isToday) {
-      const now = new Date();
-      const amsterdamTime = now.toLocaleTimeString('nl-NL', {
-        timeZone: 'Europe/Amsterdam',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      });
-      const [h, m] = amsterdamTime.split(':').map(Number);
-      cutoffMinutes = h * 60 + m + (parseInt(travelMinutes) || 0);
-    }
-
+    const cutoffMinutes = getTodayCutoffMinutes();
     return films
       .filter((film) => !selectedFilm || film.title === selectedFilm)
-      .filter((film) => selectedTheaters[film.theater])
-      .filter((film) => selectedDayParts[getDayPartForTime(film.time)])
-      .filter((film) => !isToday || timeToMinutes(film.time) >= cutoffMinutes)
+      .filter((film) => passesFilters(film, selectedDate, cutoffMinutes))
       .sort((a, b) => a.time.localeCompare(b.time));
   }, [films, selectedTheaters, selectedDayParts, travelMinutes, selectedDate, selectedFilm]);
 
@@ -165,6 +193,126 @@ export default function CinevilleFinder() {
 
   const isToday = selectedDate === todayStr;
 
+  // Zoeken: doorzoekt vandaag en de komende twee dagen op filmtitel
+  const searchDays = getNextDays();
+  const searchDaysKey = searchDays.join(',');
+  const searchQuery = normalize(searchTerm);
+  const searchActive = searchQuery.length >= 2;
+
+  useEffect(() => {
+    if (!searchActive) return;
+    let cancelled = false;
+    setSearchLoading(true);
+    setSearchError(null);
+
+    Promise.all(searchDaysKey.split(',').map(loadDay))
+      .then((days) => {
+        if (!cancelled) {
+          setSearchShows(days.flat());
+          setSearchLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setSearchError(err.message);
+          setSearchLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [searchActive, searchDaysKey, loadDay]);
+
+  const searchResults = useMemo(() => {
+    if (!searchActive) return [];
+    const cutoffMinutes = getTodayCutoffMinutes();
+    const matches = searchShows
+      .filter((film) => normalize(film.title).includes(searchQuery))
+      .filter((film) => passesFilters(film, film.date, cutoffMinutes));
+
+    return searchDaysKey
+      .split(',')
+      .map((date, i) => ({
+        date,
+        label: DAY_LABELS[i],
+        shows: matches
+          .filter((film) => film.date === date)
+          .sort((a, b) => a.time.localeCompare(b.time)),
+      }))
+      .filter((day) => day.shows.length > 0);
+  }, [searchShows, searchQuery, searchActive, searchDaysKey, selectedTheaters, selectedDayParts, travelMinutes]);
+
+  const searchShowCount = searchResults.reduce((sum, day) => sum + day.shows.length, 0);
+  const searchFilmCount = new Set(searchResults.flatMap((day) => day.shows.map((f) => f.title))).size;
+
+  const renderShow = (film, isActive, onTitleClick, titleHint) => {
+    const cfg = theaterConfig[film.theater];
+    const endTime = calcEndTime(film.time, film.duration);
+
+    return (
+      <div
+        key={film.id}
+        className={`flex items-center gap-4 px-5 py-4 border-l-[3px] ${cfg.leftBorder} ${cfg.rowHover} transition-colors group`}
+      >
+        {/* Tijd */}
+        <div className={`flex-shrink-0 w-[60px] text-center py-1.5 rounded-lg border ${cfg.timeBg}`}>
+          <span className={`text-sm font-black tabular-nums leading-none ${cfg.timeText}`}>
+            {film.time}
+          </span>
+        </div>
+
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          <button
+            onClick={onTitleClick}
+            className={`text-left font-semibold text-sm leading-snug truncate block w-full transition-colors ${
+              isActive
+                ? 'text-white'
+                : 'text-white/80 hover:text-white'
+            }`}
+            title={titleHint}
+          >
+            {film.title}
+            {isActive && <span className="ml-1.5 text-white/40 font-normal text-[11px]">× filter</span>}
+          </button>
+          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${cfg.theaterLabel}`}>
+              {theaterNames[film.theater]}
+            </span>
+            {film.language && (
+              <span className="text-[11px] text-white/30 bg-white/[0.06] px-2 py-0.5 rounded-md">
+                {film.language}
+              </span>
+            )}
+            {film.duration && (
+              <span className="text-[11px] text-white/25 bg-white/[0.06] px-2 py-0.5 rounded-md">
+                {film.duration} min
+              </span>
+            )}
+            {endTime && (
+              <span className="text-[11px] text-white/20 bg-white/[0.06] px-2 py-0.5 rounded-md">
+                klaar om {endTime}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Ticket link */}
+        {film.ticketingUrl && (
+          <a
+            href={film.ticketingUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="flex-shrink-0 text-white/15 hover:text-white/50 transition-colors"
+            title="Kaartjes kopen"
+          >
+            <Ticket className="w-4 h-4" />
+          </a>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="bg-cinematic min-h-screen text-white relative">
       {/* Header */}
@@ -191,17 +339,58 @@ export default function CinevilleFinder() {
         {/* Filter panel */}
         <div className="rounded-2xl border border-white/10 bg-white/[0.04] overflow-hidden divide-y divide-white/[0.06]">
 
-          {/* Datum */}
+          {/* Zoek film */}
           <div className="px-5 py-4">
+            <label
+              htmlFor="film-search"
+              className="flex items-center gap-2 text-[10px] font-bold text-white/30 uppercase tracking-widest mb-3"
+            >
+              <Search className="w-3 h-3" /> Zoek film
+            </label>
+            <div className="relative">
+              <Search className="w-4 h-4 text-white/25 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              {/* text-base (16px) voorkomt dat iOS inzoomt bij het typen */}
+              <input
+                id="film-search"
+                type="search"
+                enterKeyHint="search"
+                autoComplete="off"
+                placeholder="Titel of deel van de titel"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-10 py-2 rounded-lg bg-white/5 text-white/85 placeholder:text-white/25 border border-white/10 focus:border-red-500/50 focus:outline-none text-base font-medium [&::-webkit-search-cancel-button]:hidden"
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-white/35 hover:text-white/70 hover:bg-white/10 transition-colors"
+                  aria-label="Zoekopdracht wissen"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-white/25 mt-2">
+              Zoekt van vandaag t/m {formatDate(searchDays[searchDays.length - 1])}
+            </p>
+          </div>
+
+          {/* Datum */}
+          <div className={`px-5 py-4 transition-opacity ${searchActive ? 'opacity-40' : ''}`}>
             <label className="flex items-center gap-2 text-[10px] font-bold text-white/30 uppercase tracking-widest mb-3">
               <Calendar className="w-3 h-3" /> Datum
+              {searchActive && (
+                <span className="normal-case tracking-normal font-medium text-white/40">
+                  · kies een datum om het zoeken te stoppen
+                </span>
+              )}
             </label>
             <div className="space-y-3">
               <div className="flex gap-2 overflow-x-auto pb-1">
-                {getNextDays().map((date) => (
+                {searchDays.map((date) => (
                   <button
                     key={date}
-                    onClick={() => { setSelectedDate(date); setCustomDate(''); }}
+                    onClick={() => { setSelectedDate(date); setCustomDate(''); setSearchTerm(''); }}
                     className={`flex-shrink-0 px-4 py-2 rounded-lg text-sm font-semibold transition-all whitespace-nowrap border ${
                       selectedDate === date && customDate === ''
                         ? 'bg-red-600 border-red-500 text-white shadow-lg shadow-red-600/30'
@@ -217,7 +406,7 @@ export default function CinevilleFinder() {
                 <input
                   type="date"
                   value={customDate || selectedDate}
-                  onChange={(e) => { setCustomDate(e.target.value); setSelectedDate(e.target.value); }}
+                  onChange={(e) => { setCustomDate(e.target.value); setSelectedDate(e.target.value); setSearchTerm(''); }}
                   min={getMinMaxDates().minDate}
                   max={getMinMaxDates().maxDate}
                   className="px-3 py-1.5 rounded-lg bg-white/5 text-white/80 border border-white/10 focus:border-red-500/50 focus:outline-none text-sm font-medium"
@@ -242,9 +431,9 @@ export default function CinevilleFinder() {
                 className="w-20 px-3 py-1.5 rounded-lg bg-white/5 text-white/80 border border-white/10 focus:border-red-500/50 focus:outline-none text-sm font-medium text-center"
               />
               <span className="text-sm text-white/35">minuten</span>
-              {isToday && travelMinutes && parseInt(travelMinutes) > 0 && (
+              {(isToday || searchActive) && travelMinutes && parseInt(travelMinutes) > 0 && (
                 <span className="text-xs text-white/35 bg-white/5 border border-white/10 px-2.5 py-1 rounded-lg">
-                  Films vanaf{' '}
+                  {searchActive ? 'Vandaag films vanaf' : 'Films vanaf'}{' '}
                   <span className="font-bold text-white/65">
                     {(() => {
                       const now = new Date();
@@ -313,125 +502,137 @@ export default function CinevilleFinder() {
           </div>
         </div>
 
-        {/* Resultaten */}
-        <section>
-          {!loading && (selectedFilm || filteredFilms.length > 0) && (
-            <div className="flex items-center gap-2 mb-2 px-1 flex-wrap">
-              <p className="text-[10px] font-bold text-white/25 uppercase tracking-widest">
-                {filteredFilms.length} voorstelling{filteredFilms.length !== 1 ? 'en' : ''}
-              </p>
-              {selectedFilm && (
+        {/* Zoekresultaten */}
+        {searchActive && (
+          <section>
+            {!searchLoading && !searchError && searchShowCount > 0 && (
+              <div className="flex items-center gap-2 mb-2 px-1 flex-wrap">
+                <p className="text-[10px] font-bold text-white/25 uppercase tracking-widest">
+                  {searchShowCount} voorstelling{searchShowCount !== 1 ? 'en' : ''}
+                  {searchFilmCount > 1 && ` · ${searchFilmCount} films`}
+                </p>
                 <button
-                  onClick={() => setSelectedFilm(null)}
+                  onClick={() => setSearchTerm('')}
                   className="flex items-center gap-1.5 text-[11px] font-semibold bg-white/10 hover:bg-white/15 border border-white/15 text-white/60 hover:text-white/80 px-2.5 py-0.5 rounded-full transition-colors"
                 >
-                  <Film className="w-3 h-3" />
-                  {selectedFilm}
+                  <Search className="w-3 h-3" />
+                  {searchTerm.trim()}
                   <span className="text-white/40">×</span>
                 </button>
-              )}
-            </div>
-          )}
+              </div>
+            )}
 
-          {loading && (
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-12 text-center">
-              <div className="w-8 h-8 border-2 border-white/20 border-t-white/60 rounded-full animate-spin mx-auto mb-4" />
-              <p className="text-white/40 text-sm font-medium">Programmering laden…</p>
-            </div>
-          )}
+            {searchLoading && (
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-12 text-center">
+                <div className="w-8 h-8 border-2 border-white/20 border-t-white/60 rounded-full animate-spin mx-auto mb-4" />
+                <p className="text-white/40 text-sm font-medium">Programmering doorzoeken…</p>
+              </div>
+            )}
 
-          {!loading && error && (
-            <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-8 text-center">
-              <p className="text-red-400 font-medium text-sm">{error}</p>
-            </div>
-          )}
+            {!searchLoading && searchError && (
+              <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-8 text-center">
+                <p className="text-red-400 font-medium text-sm">{searchError}</p>
+              </div>
+            )}
 
-          {!loading && !error && filteredFilms.length === 0 && (
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-12 text-center">
-              <Film className="w-10 h-10 text-white/12 mx-auto mb-4" />
-              <p className="text-white/40 font-semibold text-sm">Geen films gevonden</p>
-              <p className="text-white/20 text-xs mt-1.5">
-                {isToday
-                  ? 'Alle films voor vandaag zijn al begonnen, of komen pas later.'
-                  : 'Geen programmering gevonden voor deze datum.'}
-              </p>
-            </div>
-          )}
+            {!searchLoading && !searchError && searchShowCount === 0 && (
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-12 text-center">
+                <Search className="w-10 h-10 text-white/12 mx-auto mb-4" />
+                <p className="text-white/40 font-semibold text-sm">
+                  Geen voorstellingen van “{searchTerm.trim()}”
+                </p>
+                <p className="text-white/20 text-xs mt-1.5">
+                  Gezocht van vandaag t/m {formatDate(searchDays[searchDays.length - 1])}, met de gekozen bioscopen en dagdelen.
+                </p>
+              </div>
+            )}
 
-          {!loading && !error && filteredFilms.length > 0 && (
-            <div className="rounded-2xl overflow-hidden border border-white/10 bg-white/[0.03] divide-y divide-white/[0.06]">
-              {filteredFilms.map((film) => {
-                const cfg = theaterConfig[film.theater];
-                const endTime = calcEndTime(film.time, film.duration);
-                const isActive = selectedFilm === film.title;
-
-                return (
-                  <div
-                    key={film.id}
-                    className={`flex items-center gap-4 px-5 py-4 border-l-[3px] ${cfg.leftBorder} ${cfg.rowHover} transition-colors group`}
-                  >
-                    {/* Tijd */}
-                    <div className={`flex-shrink-0 w-[60px] text-center py-1.5 rounded-lg border ${cfg.timeBg}`}>
-                      <span className={`text-sm font-black tabular-nums leading-none ${cfg.timeText}`}>
-                        {film.time}
-                      </span>
+            {!searchLoading && !searchError && searchShowCount > 0 && (
+              <div className="space-y-4">
+                {searchResults.map((day) => (
+                  <div key={day.date}>
+                    <h2 className="flex items-baseline gap-2 mb-2 px-1">
+                      <span className="text-sm font-bold text-white/80">{day.label}</span>
+                      <span className="text-xs text-white/35">{formatDate(day.date)}</span>
+                    </h2>
+                    <div className="rounded-2xl overflow-hidden border border-white/10 bg-white/[0.03] divide-y divide-white/[0.06]">
+                      {day.shows.map((film) =>
+                        renderShow(
+                          film,
+                          false,
+                          () => setSearchTerm(film.title),
+                          `Alleen "${film.title}" tonen`
+                        )
+                      )}
                     </div>
-
-                    {/* Info */}
-                    <div className="flex-1 min-w-0">
-                      <button
-                        onClick={() => setSelectedFilm(isActive ? null : film.title)}
-                        className={`text-left font-semibold text-sm leading-snug truncate block w-full transition-colors ${
-                          isActive
-                            ? 'text-white'
-                            : 'text-white/80 hover:text-white'
-                        }`}
-                        title={isActive ? 'Klik om filter te wissen' : `Filter op "${film.title}"`}
-                      >
-                        {film.title}
-                        {isActive && <span className="ml-1.5 text-white/40 font-normal text-[11px]">× filter</span>}
-                      </button>
-                      <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${cfg.theaterLabel}`}>
-                          {theaterNames[film.theater]}
-                        </span>
-                        {film.language && (
-                          <span className="text-[11px] text-white/30 bg-white/[0.06] px-2 py-0.5 rounded-md">
-                            {film.language}
-                          </span>
-                        )}
-                        {film.duration && (
-                          <span className="text-[11px] text-white/25 bg-white/[0.06] px-2 py-0.5 rounded-md">
-                            {film.duration} min
-                          </span>
-                        )}
-                        {endTime && (
-                          <span className="text-[11px] text-white/20 bg-white/[0.06] px-2 py-0.5 rounded-md">
-                            klaar om {endTime}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Ticket link */}
-                    {film.ticketingUrl && (
-                      <a
-                        href={film.ticketingUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex-shrink-0 text-white/15 hover:text-white/50 transition-colors"
-                        title="Kaartjes kopen"
-                      >
-                        <Ticket className="w-4 h-4" />
-                      </a>
-                    )}
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* Resultaten */}
+        {!searchActive && (
+          <section>
+            {!loading && (selectedFilm || filteredFilms.length > 0) && (
+              <div className="flex items-center gap-2 mb-2 px-1 flex-wrap">
+                <p className="text-[10px] font-bold text-white/25 uppercase tracking-widest">
+                  {filteredFilms.length} voorstelling{filteredFilms.length !== 1 ? 'en' : ''}
+                </p>
+                {selectedFilm && (
+                  <button
+                    onClick={() => setSelectedFilm(null)}
+                    className="flex items-center gap-1.5 text-[11px] font-semibold bg-white/10 hover:bg-white/15 border border-white/15 text-white/60 hover:text-white/80 px-2.5 py-0.5 rounded-full transition-colors"
+                  >
+                    <Film className="w-3 h-3" />
+                    {selectedFilm}
+                    <span className="text-white/40">×</span>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {loading && (
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-12 text-center">
+                <div className="w-8 h-8 border-2 border-white/20 border-t-white/60 rounded-full animate-spin mx-auto mb-4" />
+                <p className="text-white/40 text-sm font-medium">Programmering laden…</p>
+              </div>
+            )}
+
+            {!loading && error && (
+              <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-8 text-center">
+                <p className="text-red-400 font-medium text-sm">{error}</p>
+              </div>
+            )}
+
+            {!loading && !error && filteredFilms.length === 0 && (
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-12 text-center">
+                <Film className="w-10 h-10 text-white/12 mx-auto mb-4" />
+                <p className="text-white/40 font-semibold text-sm">Geen films gevonden</p>
+                <p className="text-white/20 text-xs mt-1.5">
+                  {isToday
+                    ? 'Alle films voor vandaag zijn al begonnen, of komen pas later.'
+                    : 'Geen programmering gevonden voor deze datum.'}
+                </p>
+              </div>
+            )}
+
+            {!loading && !error && filteredFilms.length > 0 && (
+              <div className="rounded-2xl overflow-hidden border border-white/10 bg-white/[0.03] divide-y divide-white/[0.06]">
+                {filteredFilms.map((film) => {
+                  const isActive = selectedFilm === film.title;
+                  return renderShow(
+                    film,
+                    isActive,
+                    () => setSelectedFilm(isActive ? null : film.title),
+                    isActive ? 'Klik om filter te wissen' : `Filter op "${film.title}"`
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Footer */}
         <footer className="pt-2 pb-6 text-center">
