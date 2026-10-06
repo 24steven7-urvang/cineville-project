@@ -46,13 +46,23 @@ exports.handler = async function (event) {
   // Cineville's API crashes on POST requests (500), but GET works.
   // Try GET first and fall back to POST in case that ever changes.
   const endpoint = 'https://cineville.nl/api/graphql';
+  const baseHeaders = {
+    'User-Agent':
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+    Accept: 'application/json',
+    'Accept-Language': 'nl-NL,nl;q=0.9',
+  };
   let res;
+  let getStatus;
   try {
-    res = await fetch(`${endpoint}?query=${encodeURIComponent(query)}`);
+    res = await fetch(`${endpoint}?query=${encodeURIComponent(query)}`, {
+      headers: baseHeaders,
+    });
+    getStatus = res.status;
     if (!res.ok) {
       res = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...baseHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ query }),
       });
     }
@@ -64,9 +74,16 @@ exports.handler = async function (event) {
   }
 
   if (!res.ok) {
+    const detail = (await res.text().catch(() => '')).slice(0, 300);
+    console.error('Cineville API fout', { getStatus, postStatus: res.status, detail });
     return {
       statusCode: res.status,
-      body: JSON.stringify({ error: 'Cineville API fout.' }),
+      body: JSON.stringify({
+        error: 'Cineville API fout.',
+        getStatus,
+        postStatus: res.status,
+        detail,
+      }),
     };
   }
 
