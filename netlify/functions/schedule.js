@@ -21,74 +21,54 @@ exports.handler = async function (event) {
   const queryStart = new Date(dayStartUTC.getTime() - 2 * 3600 * 1000).toISOString();
   const queryEnd = new Date(dayStartUTC.getTime() + 26 * 3600 * 1000).toISOString();
 
-  const query = `{
-    showtimes(
-      filters: {
-        venueId: { in: ${JSON.stringify(VENUE_IDS)} }
-        startDate: { gte: "${queryStart}", lt: "${queryEnd}" }
-      }
-      page: { limit: 200 }
-      locale: "nl-NL"
-    ) {
-      data {
-        id
-        startDate
-        endDate
-        ticketingUrl
-        languageVersion
-        subtitles
-        film { title }
-        theater { name }
-      }
-    }
-  }`;
+  // Cineville's old /api/graphql endpoint is gone. The website itself reads
+  // from the CultureKit REST API, so we use that too.
+  const API = 'https://api.cineville.nl';
+  const PAGE_LIMIT = 100;
 
-  // Cineville's API crashes on POST requests (500), but GET works.
-  // Try GET first and fall back to POST in case that ever changes.
-  const endpoint = 'https://cineville.nl/api/graphql';
-  const baseHeaders = {
-    'User-Agent':
-      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
-    Accept: 'application/json',
-    'Accept-Language': 'nl-NL,nl;q=0.9',
-  };
-  let res;
-  let getStatus;
-  try {
-    res = await fetch(`${endpoint}?query=${encodeURIComponent(query)}`, {
-      headers: baseHeaders,
-    });
-    getStatus = res.status;
-    if (!res.ok) {
-      res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { ...baseHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
-      });
+  // The API returns at most 100 events and offers no next-page link, so we
+  // query per venue and, when a page is full, continue from the last start time.
+  const fetchVenue = async (venueId) => {
+    const events = new Map();
+    let from = queryStart;
+    for (let page = 0; page < 10; page++) {
+      const params = new URLSearchParams();
+      params.append('venueId[in][]', venueId);
+      params.set('startDate[gte]', from);
+      params.set('startDate[lt]', queryEnd);
+      params.set('page[limit]', String(PAGE_LIMIT));
+      params.set('sort[startDate]', 'asc');
+      params.set('embed[production]', 'true');
+      params.set('embed[venue]', 'true');
+
+      const res = await fetch(`${API}/events?${params}`);
+      if (!res.ok) throw Object.assign(new Error('Cineville API fout.'), { status: res.status });
+      const json = await res.json();
+      const batch = json._embedded?.events || [];
+      batch.forEach((ev) => events.set(ev.id, ev));
+
+      const last = batch[batch.length - 1]?.startDate;
+      if (batch.length < PAGE_LIMIT || !last || last === from) break;
+      from = last;
     }
+    return [...events.values()];
+  };
+
+  let showtimes;
+  try {
+    showtimes = (await Promise.all(VENUE_IDS.map(fetchVenue))).flat();
   } catch (err) {
+    if (err.status) {
+      return {
+        statusCode: err.status,
+        body: JSON.stringify({ error: 'Cineville API fout.' }),
+      };
+    }
     return {
       statusCode: 502,
       body: JSON.stringify({ error: 'Kon Cineville niet bereiken.' }),
     };
   }
-
-  if (!res.ok) {
-    const detail = (await res.text().catch(() => '')).slice(0, 300);
-    console.error('Cineville API fout', { getStatus, postStatus: res.status, detail });
-    return {
-      statusCode: res.status,
-      body: JSON.stringify({
-        error: 'Cineville API fout.',
-        getStatus,
-        postStatus: res.status,
-        detail,
-      }),
-    };
-  }
-
-  const json = await res.json();
-  const showtimes = json.data?.showtimes?.data || [];
 
   const normalized = showtimes
     .map((show) => {
@@ -107,14 +87,15 @@ exports.handler = async function (event) {
       });
 
       const duration = end ? Math.round((end - start) / 60000) : null;
-      const theater = THEATER_MAP[show.theater?.name];
+      const theater = THEATER_MAP[show._embedded?.venue?.name];
 
-      const langParts = [show.languageVersion, show.subtitles].filter(Boolean);
+      const subs = show.attributes?.subtitles;
+      const langParts = [show.attributes?.languageVersion, Array.isArray(subs) ? subs.join(', ') : subs].filter(Boolean);
       const language = langParts.length > 0 ? langParts.join(' · ') : null;
 
       return {
         id: show.id,
-        title: show.film?.title || '–',
+        title: show._embedded?.production?.title || show.productionHint?.title || '–',
         time,
         theater,
         duration,
