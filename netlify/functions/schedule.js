@@ -1,16 +1,29 @@
-const VENUE_IDS = [
-  '57922ba0-1dba-49bc-b893-2be7b8d9ef4d', // KINO
-  '0d726ad9-55da-415b-8c92-e15902a29b08', // LantarenVenster
-  '90c6c215-c9b0-4461-987e-edbc096e219a', // Cinerama
-];
-
-const THEATER_MAP = {
-  'KINO': 'kino',
-  'Cinerama': 'cinerama',
-  'LantarenVenster': 'lantaren',
+// Cineville venue IDs per city, mapped to the theater keys the app uses
+const CITIES = {
+  rotterdam: {
+    '57922ba0-1dba-49bc-b893-2be7b8d9ef4d': 'kino',
+    '0d726ad9-55da-415b-8c92-e15902a29b08': 'lantaren',
+    '90c6c215-c9b0-4461-987e-edbc096e219a': 'cinerama',
+  },
+  utrecht: {
+    'fd5a6386-c176-4839-8641-07fac03ca2e2': 'hartlooper',
+    'c15751d4-4d4b-4cc8-a158-70f2c8fe4cb7': 'springhaver',
+    'ddb268bf-0634-4f5d-b396-e7a5549d2451': 'slachtstraat',
+    '310f9378-52b5-4aaf-b7b6-4b4b1f6fb1bb': 'sien',
+  },
 };
 
 exports.handler = async function (event) {
+  const city = event.queryStringParameters?.city || 'rotterdam';
+  const THEATER_MAP = CITIES[city];
+  if (!THEATER_MAP) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: `Onbekende stad: ${city}` }),
+    };
+  }
+  const VENUE_IDS = Object.keys(THEATER_MAP);
+
   // Default to today in Amsterdam timezone
   const date =
     event.queryStringParameters?.date ||
@@ -87,7 +100,7 @@ exports.handler = async function (event) {
       });
 
       const duration = end ? Math.round((end - start) / 60000) : null;
-      const theater = THEATER_MAP[show._embedded?.venue?.name];
+      const theater = THEATER_MAP[show.venueId || show._embedded?.venue?.id];
 
       const subs = show.attributes?.subtitles;
       const langParts = [show.attributes?.languageVersion, Array.isArray(subs) ? subs.join(', ') : subs].filter(Boolean);

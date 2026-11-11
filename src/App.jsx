@@ -10,16 +10,45 @@ const normalize = (str) =>
 
 const DAY_LABELS = ['Vandaag', 'Morgen', 'Overmorgen'];
 
+// Cineville-bioscopen per stad; de sleutels komen overeen met netlify/functions/schedule.js
+const CITIES = {
+  rotterdam: {
+    name: 'Rotterdam',
+    theaters: { kino: 'Kino', cinerama: 'Cinerama', lantaren: 'LantarenVenster' },
+  },
+  utrecht: {
+    name: 'Utrecht',
+    theaters: {
+      hartlooper: 'Louis Hartlooper',
+      springhaver: 'Springhaver',
+      slachtstraat: 'Slachtstraat',
+      sien: 'De Sien',
+    },
+  },
+};
+
+const CITY_STORAGE_KEY = 'cineville-city';
+
+const loadSavedCity = () => {
+  try {
+    const saved = localStorage.getItem(CITY_STORAGE_KEY);
+    return CITIES[saved] ? saved : 'rotterdam';
+  } catch {
+    return 'rotterdam';
+  }
+};
+
 export default function CinevilleFinder() {
   const todayStr = todayAmsterdam();
 
+  const [city, setCity] = useState(loadSavedCity);
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const [customDate, setCustomDate] = useState('');
-  const [selectedTheaters, setSelectedTheaters] = useState({
-    kino: true,
-    cinerama: true,
-    lantaren: true,
-  });
+  const [selectedTheaters, setSelectedTheaters] = useState(() =>
+    Object.fromEntries(
+      Object.values(CITIES).flatMap((c) => Object.keys(c.theaters)).map((t) => [t, true])
+    )
+  );
   const [selectedDayParts, setSelectedDayParts] = useState({
     ochtend: true,
     middag: true,
@@ -36,25 +65,36 @@ export default function CinevilleFinder() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState(null);
 
-  // Programmering per dag onthouden, zodat zoeken en wisselen van datum niet steeds opnieuw laadt
+  // Gekozen stad onthouden voor de volgende keer
+  useEffect(() => {
+    try {
+      localStorage.setItem(CITY_STORAGE_KEY, city);
+    } catch {
+      // Opslaan mag mislukken (bijv. privémodus); de app werkt dan gewoon met Rotterdam
+    }
+    document.title = `Cineville ${CITIES[city].name}`;
+  }, [city]);
+
+  // Programmering per stad en dag onthouden, zodat zoeken en wisselen van datum niet steeds opnieuw laadt
   const scheduleCache = useRef(new Map());
   const loadDay = useCallback((date) => {
     const cache = scheduleCache.current;
-    if (!cache.has(date)) {
-      const request = fetch(`/.netlify/functions/schedule?date=${date}`)
+    const key = `${city}:${date}`;
+    if (!cache.has(key)) {
+      const request = fetch(`/.netlify/functions/schedule?city=${city}&date=${date}`)
         .then((res) => {
           if (!res.ok) throw new Error('Kon programmering niet laden.');
           return res.json();
         })
         .then((data) => (Array.isArray(data) ? data : []))
         .catch((err) => {
-          cache.delete(date);
+          cache.delete(key);
           throw err;
         });
-      cache.set(date, request);
+      cache.set(key, request);
     }
-    return cache.get(date);
-  }, []);
+    return cache.get(key);
+  }, [city]);
 
   // Haal films op bij datumwisseling
   useEffect(() => {
@@ -81,7 +121,8 @@ export default function CinevilleFinder() {
     return () => { cancelled = true; };
   }, [selectedDate, loadDay]);
 
-  const theaterNames = { kino: 'Kino', cinerama: 'Cinerama', lantaren: 'LantarenVenster' };
+  const theaterNames = CITIES[city].theaters;
+  const cityTheaters = Object.keys(theaterNames);
   const dayPartNames = { ochtend: 'Ochtend', middag: 'Middag', vooravond: 'Vooravond', avond: 'Avond' };
 
   const theaterConfig = {
@@ -111,6 +152,42 @@ export default function CinevilleFinder() {
       theaterLabel: 'bg-violet-500/15 text-violet-300',
       rowHover: 'hover:bg-violet-500/5',
       leftBorder: 'border-l-violet-400',
+    },
+    hartlooper: {
+      activeBg: 'bg-rose-500/10 border-rose-500/40 text-rose-300',
+      dot: 'bg-rose-400',
+      timeBg: 'bg-rose-500/10 border-rose-500/25',
+      timeText: 'text-rose-300',
+      theaterLabel: 'bg-rose-500/15 text-rose-300',
+      rowHover: 'hover:bg-rose-500/5',
+      leftBorder: 'border-l-rose-400',
+    },
+    springhaver: {
+      activeBg: 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300',
+      dot: 'bg-emerald-400',
+      timeBg: 'bg-emerald-500/10 border-emerald-500/25',
+      timeText: 'text-emerald-300',
+      theaterLabel: 'bg-emerald-500/15 text-emerald-300',
+      rowHover: 'hover:bg-emerald-500/5',
+      leftBorder: 'border-l-emerald-400',
+    },
+    slachtstraat: {
+      activeBg: 'bg-orange-500/10 border-orange-500/40 text-orange-300',
+      dot: 'bg-orange-400',
+      timeBg: 'bg-orange-500/10 border-orange-500/25',
+      timeText: 'text-orange-300',
+      theaterLabel: 'bg-orange-500/15 text-orange-300',
+      rowHover: 'hover:bg-orange-500/5',
+      leftBorder: 'border-l-orange-400',
+    },
+    sien: {
+      activeBg: 'bg-cyan-500/10 border-cyan-500/40 text-cyan-300',
+      dot: 'bg-cyan-400',
+      timeBg: 'bg-cyan-500/10 border-cyan-500/25',
+      timeText: 'text-cyan-300',
+      theaterLabel: 'bg-cyan-500/15 text-cyan-300',
+      rowHover: 'hover:bg-cyan-500/5',
+      leftBorder: 'border-l-cyan-400',
     },
   };
 
@@ -327,7 +404,7 @@ export default function CinevilleFinder() {
                 CINEVILLE<span className="text-red-500">.</span>NL
               </h1>
               <p className="text-xs text-white/35 mt-0.5 font-medium tracking-wide">
-                Rotterdam · Kino · Cinerama · LantarenVenster
+                {[CITIES[city].name, ...Object.values(theaterNames)].join(' · ')}
               </p>
             </div>
           </div>
@@ -338,6 +415,29 @@ export default function CinevilleFinder() {
 
         {/* Filter panel */}
         <div className="rounded-2xl border border-white/10 bg-white/[0.04] overflow-hidden divide-y divide-white/[0.06]">
+
+          {/* Stad */}
+          <div className="px-5 py-4">
+            <label className="flex items-center gap-2 text-[10px] font-bold text-white/30 uppercase tracking-widest mb-3">
+              <MapPin className="w-3 h-3" /> Stad
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(CITIES).map(([key, c]) => (
+                <button
+                  key={key}
+                  onClick={() => setCity(key)}
+                  aria-pressed={city === key}
+                  className={`py-2 px-3 rounded-lg text-sm font-semibold transition-all border ${
+                    city === key
+                      ? 'bg-red-600 border-red-500 text-white shadow-lg shadow-red-600/30'
+                      : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10 hover:text-white/80'
+                  }`}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          </div>
 
           {/* Zoek film */}
           <div className="px-5 py-4">
@@ -455,8 +555,8 @@ export default function CinevilleFinder() {
             <label className="flex items-center gap-2 text-[10px] font-bold text-white/30 uppercase tracking-widest mb-3">
               <MapPin className="w-3 h-3" /> Bioscoop
             </label>
-            <div className="grid grid-cols-3 gap-2">
-              {['kino', 'cinerama', 'lantaren'].map((theater) => (
+            <div className={`grid gap-2 ${cityTheaters.length === 4 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+              {cityTheaters.map((theater) => (
                 <button
                   key={theater}
                   onClick={() => toggleTheater(theater)}

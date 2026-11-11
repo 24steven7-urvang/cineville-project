@@ -1,7 +1,7 @@
 {
-  "name": "Cineville Rotterdam",
+  "name": "Cineville Rotterdam & Utrecht",
   "short_name": "Cineville",
-  "description": "Filmprogrammering van Kino, Cinerama en LantarenVenster",
+  "description": "Filmprogrammering van de Cineville-bioscopen in Rotterdam en Utrecht",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#050505",
